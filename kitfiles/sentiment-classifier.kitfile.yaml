@@ -1,0 +1,40 @@
+manifestVersion: 1.0.0
+
+package:
+  name: sentiment-classifier
+  version: 2.0.0
+  description: >
+    BERT-based sentiment analysis classifier trained on the IMDB movie review dataset.
+    Fine-tuned using HuggingFace Transformers. Achieves 93.2% accuracy on binary
+    sentiment classification (positive / negative).
+  authors:
+    - Satyam Kumar <krsatyamthakur@gmail.com>
+  license: Apache-2.0
+
+model:
+  name: bert-sentiment
+  path: ./model/
+  framework: pytorch
+  version: "2.0.1"
+  license: Apache-2.0
+  description: >
+    Fine-tuned bert-base-uncased checkpoint for binary text sentiment classification.
+    Input: raw text string. Output: [negative, positive] class probabilities.
+
+datasets:
+  - name: imdb-train
+    path: ./data/train/
+    description: IMDB movie review training split (25,000 samples)
+    license: MIT
+  - name: imdb-test
+    path: ./data/test/
+    description: IMDB movie review test split (25,000 samples)
+    license: MIT
+
+code:
+  - path: ./src/
+    description: Training loop, inference server, and preprocessing utilities
+
+docs:
+  - path: ./README.md
+    description: Model card and usage instructions

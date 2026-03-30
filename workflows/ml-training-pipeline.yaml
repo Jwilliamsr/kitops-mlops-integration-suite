@@ -1,0 +1,289 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: ml-training-pipeline
+  namespace: argo
+  labels:
+    workflow-type: ml-training
+    app: kitops-demo
+spec:
+  entrypoint: ml-pipeline
+  serviceAccountName: argo-workflow
+
+  # Arguments that can be overridden at submission time
+  arguments:
+    parameters:
+      - name: model-name
+        value: fraud-detection
+      - name: model-version
+        value: "1.0.0"
+      - name: registry-url
+        value: ghcr.io/myorg
+      - name: kubeflow-registry-url
+        value: "http://model-registry-service.kubeflow.svc.cluster.local:8080"
+
+  # Shared storage between pipeline steps
+  volumes:
+    - name: model-artifacts
+      emptyDir: {}
+
+  templates:
+    # ──────────────────────── DAG ──────────────────────────
+    - name: ml-pipeline
+      steps:
+        - - name: preprocess
+            template: data-preprocessing
+        - - name: train
+            template: model-training
+        - - name: evaluate
+            template: model-evaluation
+        - - name: package
+            template: kitops-package
+            arguments:
+              parameters:
+                - name: model-name
+                  value: "{{workflow.parameters.model-name}}"
+                - name: registry-url
+                  value: "{{workflow.parameters.registry-url}}"
+        - - name: register
+            template: model-register
+            arguments:
+              parameters:
+                - name: model-name
+                  value: "{{workflow.parameters.model-name}}"
+                - name: registry-url
+                  value: "{{workflow.parameters.registry-url}}"
+                - name: kubeflow-url
+                  value: "{{workflow.parameters.kubeflow-registry-url}}"
+
+    # ──────────────── Step 1: Data Preprocessing ───────────────
+    - name: data-preprocessing
+      container:
+        image: python:3.11-slim
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            pip install pandas scikit-learn numpy --quiet
+            python3 -c "
+            import pandas as pd
+            import numpy as np
+
+            np.random.seed(42)
+            n = 10000
+            fraud_mask = np.random.choice([0, 1], n, p=[0.98, 0.02]).astype(bool)
+
+            df = pd.DataFrame({
+                'amount': np.where(fraud_mask,
+                    np.random.exponential(3000, n),
+                    np.random.exponential(80, n)),
+                'hour': np.where(fraud_mask,
+                    np.random.randint(0, 5, n),
+                    np.random.randint(6, 23, n)),
+                'merchant_category': np.random.randint(0, 10, n),
+                'Class': fraud_mask.astype(int),
+            })
+            df.to_csv('/artifacts/train.csv', index=False)
+            print(f'Dataset: {len(df)} rows | Fraud: {df.Class.sum()} ({df.Class.mean():.1%})')
+            "
+            echo "Preprocessing complete"
+        volumeMounts:
+          - name: model-artifacts
+            mountPath: /artifacts
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+
+    # ──────────────── Step 2: Model Training ───────────────────
+    - name: model-training
+      container:
+        image: python:3.11-slim
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            pip install xgboost scikit-learn pandas numpy --quiet
+            python3 << 'PYEOF'
+            import xgboost as xgb
+            import pandas as pd
+            import json
+            import os
+            from sklearn.model_selection import train_test_split
+            from sklearn.metrics import accuracy_score, f1_score
+
+            df = pd.read_csv('/artifacts/train.csv')
+            X, y = df.drop('Class', axis=1), df['Class']
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+            model = xgb.XGBClassifier(
+                n_estimators=100, max_depth=6, learning_rate=0.1,
+                scale_pos_weight=len(y_train[y_train==0])/max(len(y_train[y_train==1]), 1),
+                use_label_encoder=False, eval_metric='logloss', verbosity=0,
+            )
+            model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+
+            preds = model.predict(X_test)
+            metrics = {
+                'accuracy': round(float(accuracy_score(y_test, preds)), 4),
+                'f1_score': round(float(f1_score(y_test, preds, zero_division=0)), 4),
+            }
+            print(f'Metrics: {metrics}')
+
+            os.makedirs('/artifacts/model', exist_ok=True)
+            model.save_model('/artifacts/model/fraud_xgb.json')
+
+            with open('/artifacts/metrics.json', 'w') as f:
+                json.dump(metrics, f)
+
+            print('Training complete!')
+            PYEOF
+        volumeMounts:
+          - name: model-artifacts
+            mountPath: /artifacts
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+
+    # ──────────────── Step 3: Evaluation ───────────────────────
+    - name: model-evaluation
+      container:
+        image: python:3.11-slim
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            pip install pandas numpy --quiet
+            python3 -c "
+            import json
+
+            with open('/artifacts/metrics.json') as f:
+                metrics = json.load(f)
+
+            print('=== Model Evaluation Report ===')
+            print(f'Accuracy : {metrics[\"accuracy\"]:.4f}')
+            print(f'F1 Score : {metrics[\"f1_score\"]:.4f}')
+
+            # Minimum acceptance thresholds
+            MIN_ACCURACY = 0.90
+            MIN_F1 = 0.50
+
+            if metrics['accuracy'] < MIN_ACCURACY:
+                raise ValueError(f'Accuracy {metrics[\"accuracy\"]} below threshold {MIN_ACCURACY}')
+            if metrics['f1_score'] < MIN_F1:
+                raise ValueError(f'F1 {metrics[\"f1_score\"]} below threshold {MIN_F1}')
+
+            print('Evaluation PASSED — proceeding to packaging')
+            "
+        volumeMounts:
+          - name: model-artifacts
+            mountPath: /artifacts
+
+    # ──────────────── Step 4: KitOps Packaging ─────────────────
+    - name: kitops-package
+      inputs:
+        parameters:
+          - name: model-name
+          - name: registry-url
+      container:
+        image: your-registry/kitops-executor:latest
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            cd /artifacts
+
+            cat > Kitfile.yaml <<EOF
+            manifestVersion: 1.0.0
+            package:
+              name: "{{inputs.parameters.model-name}}"
+              version: "1.0.0-${WORKFLOW_UID:0:8}"
+              description: "Automated pipeline output — workflow ${WORKFLOW_UID}"
+              authors: ["Argo Pipeline"]
+            model:
+              name: fraud-xgboost
+              path: ./model/
+              framework: xgboost
+              version: "1.7.6"
+              license: Apache-2.0
+            datasets:
+              - name: fraud-train
+                path: ./train.csv
+            EOF
+
+            MODEL_TAG="{{inputs.parameters.registry-url}}/{{inputs.parameters.model-name}}:${WORKFLOW_UID:0:8}"
+
+            kit login {{inputs.parameters.registry-url}} \
+                -u ${REGISTRY_USER} -p ${REGISTRY_PASS}
+
+            kit build . -t ${MODEL_TAG} -f Kitfile.yaml
+            kit push ${MODEL_TAG}
+            kit inspect ${MODEL_TAG} --format json > /artifacts/kit-manifest.json
+
+            echo "${MODEL_TAG}" > /artifacts/model-uri.txt
+            echo "✅ ModelKit pushed: ${MODEL_TAG}"
+        env:
+          - name: WORKFLOW_UID
+            value: "{{workflow.uid}}"
+          - name: REGISTRY_USER
+            valueFrom:
+              secretKeyRef:
+                name: registry-credentials
+                key: username
+          - name: REGISTRY_PASS
+            valueFrom:
+              secretKeyRef:
+                name: registry-credentials
+                key: password
+        volumeMounts:
+          - name: model-artifacts
+            mountPath: /artifacts
+
+    # ──────────────── Step 5: Model Registration ───────────────
+    - name: model-register
+      inputs:
+        parameters:
+          - name: model-name
+          - name: registry-url
+          - name: kubeflow-url
+      container:
+        image: your-registry/kitops-executor:latest
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            MODEL_URI=$(cat /artifacts/model-uri.txt)
+            python3 << 'PYEOF'
+            import json, os
+            from model_registry import ModelRegistry
+
+            with open('/artifacts/metrics.json') as f:
+                metrics = json.load(f)
+            with open('/artifacts/model-uri.txt') as f:
+                uri = f.read().strip()
+
+            registry = ModelRegistry(
+                server_address="{{inputs.parameters.kubeflow-url}}",
+                port=None,
+                author="Argo Pipeline",
+                is_secure=False,
+            )
+
+            rm = registry.register_model(
+                name="{{inputs.parameters.model-name}}",
+                uri=f"oci://{uri}",
+                version=uri.split(":")[-1],
+                description="Automated Argo pipeline output",
+                metadata={
+                    "accuracy": str(metrics.get("accuracy", "")),
+                    "f1_score": str(metrics.get("f1_score", "")),
+                    "workflow_uid": os.environ.get("WORKFLOW_UID", ""),
+                    "pipeline": "ml-training-pipeline",
+                    "automated": "true",
+                },
+            )
+            print(f"✅ Registered: {rm.id} | {rm.name}")
+            PYEOF
+        env:
+          - name: WORKFLOW_UID
+            value: "{{workflow.uid}}"
+        volumeMounts:
+          - name: model-artifacts
+            mountPath: /artifacts

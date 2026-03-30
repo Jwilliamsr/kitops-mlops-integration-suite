@@ -1,0 +1,33 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: inject-model-metadata
+  annotations:
+    policies.kyverno.io/title: Inject KitOps Model Metadata Annotations
+    policies.kyverno.io/category: ML Governance
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >
+      Automatically injects kitops.io/* annotations on model pods in ml-production
+      and ml-staging for full audit trail visibility. Uses non-overwriting mutation
+      (+() syntax) so manually set annotations are preserved.
+spec:
+  rules:
+    - name: add-kitops-annotations
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - ml-production
+                - ml-staging
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              +(kitops.io/managed): "true"
+              +(kitops.io/registry): "ghcr.io/myorg"
+              +(kitops.io/packaged-by): "kitops-argo-pipeline"
+              +(kitops.io/policy-version): "v1.0"
+              +(kitops.io/injected-at): "{{ time_now_utc() }}"

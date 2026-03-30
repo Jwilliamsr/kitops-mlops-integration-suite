@@ -1,0 +1,38 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-model-tag
+  annotations:
+    policies.kyverno.io/title: Disallow Latest Model Tag in Production
+    policies.kyverno.io/category: ML Governance
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >
+      Production model images must NOT use the ':latest' tag.
+      The :latest tag is mutable and breaks reproducibility guarantees.
+      Use semantic version tags (v1.0.0) or digest-pinned references (sha256:...).
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: check-no-latest-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - ml-production
+      validate:
+        message: >
+          ❌ Policy violation: Production model images must NOT use ':latest'.
+          Use a semantic version tag (e.g., v1.0.0) or digest pin (sha256:...).
+          Current image: {{ request.object.spec.containers[0].image }}
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.image }}"
+                    operator: Equals
+                    value: "*:latest"

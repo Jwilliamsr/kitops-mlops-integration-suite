@@ -1,0 +1,41 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-model-labels
+  annotations:
+    policies.kyverno.io/title: Require ModelKit Metadata Labels
+    policies.kyverno.io/category: ML Governance
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >
+      All model pods in ml-production and ml-staging must have required
+      labels for traceability. Required labels: model-name, model-version, team.
+      These labels enable filtering, auditing, and incident response.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: check-model-labels
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - ml-production
+                - ml-staging
+      validate:
+        message: >
+          ❌ Policy violation: ModelKit pods must have required labels.
+          Missing one or more of: 'model-name', 'model-version', 'team'.
+          Example:
+            labels:
+              model-name: fraud-detection
+              model-version: "1.0.0"
+              team: ml-engineering
+        pattern:
+          metadata:
+            labels:
+              model-name: "?*"
+              model-version: "?*"
+              team: "?*"

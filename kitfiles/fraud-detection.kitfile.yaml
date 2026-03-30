@@ -1,0 +1,39 @@
+manifestVersion: 1.0.0
+
+package:
+  name: fraud-detection-model
+  version: 1.0.0
+  description: >
+    XGBoost-based fraud detection classifier trained on synthetic credit card
+    transaction data. Achieves ~98% accuracy and 0.71 F1 score on the fraud class.
+  authors:
+    - Satyam Kumar <krsatyamthakur@gmail.com>
+  license: Apache-2.0
+
+model:
+  name: fraud-xgboost
+  path: ./model/
+  framework: xgboost
+  version: "1.7.6"
+  license: Apache-2.0
+  description: >
+    Gradient-boosted decision tree classifier for binary fraud detection.
+    Features: transaction amount, hour of day, merchant category.
+
+datasets:
+  - name: fraud-train
+    path: ./data/
+    description: >
+      Synthetic credit card transaction dataset. 10,000 rows with a 2% fraud rate.
+      Features: amount, hour, merchant_category. Label: Class (0=legit, 1=fraud).
+    license: Apache-2.0
+
+code:
+  - path: ./scripts/
+    description: Training, registration, and retrieval scripts
+
+docs:
+  - path: ./docs/
+    description: Integration guides and tutorial documentation
+  - path: ./README.md
+    description: Project overview and quick start
