@@ -2,7 +2,7 @@
 
 > **GSoC 2026 Prototype** — Enriching KitOps Integration Guides with Kubeflow Model Registry, Argo Workflows & Kyverno
 
-[![KitOps](https://img.shields.io/badge/KitOps-OCI%20ML%20Packaging-blue?logo=docker)](https://kitops.ml)
+[![Packaged with KitOps](https://img.shields.io/badge/Packaged%20with-KitOps-FFAF52?labelColor=363636)](https://kitops.org)
 [![Kubeflow](https://img.shields.io/badge/Kubeflow-Model%20Registry-orange?logo=kubernetes)](https://kubeflow.org)
 [![Argo](https://img.shields.io/badge/Argo-Workflows-blueviolet?logo=argo)](https://argoproj.github.io)
 [![Kyverno](https://img.shields.io/badge/Kyverno-Policy%20Engine-green?logo=kubernetes)](https://kyverno.io)
